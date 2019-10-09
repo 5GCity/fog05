@@ -53,6 +53,8 @@ if [ $TEST ]; then
     lxc file push ./ocaml/mec_platform/etc/ip_replace.sh plat/tmp/
     lxc exec plat --  /tmp/ip_replace.sh
     lxc exec plat -- systemctl restart nginx
+    lxc exec plat -- touch /tmp/dynhosts
+    lxc exec plat -- chmod 0666 /tmp/dynhosts
 
     sleep 5
 
