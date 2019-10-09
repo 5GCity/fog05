@@ -25,8 +25,8 @@ done
 docker image rm fog05/yaks:5gcity --force
 docker image rm fog05/meao --force
 
-docker network rm fog05-meaonet
-docker network create -d overlay --attachable fog05-meaonet
+# docker network rm fog05-meaonet
+# docker network create -d overlay --attachable fog05-meaonet
 
 
 docker stack deploy -c ./docker/meao/docker-compose.yaml meao
