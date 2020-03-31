@@ -1,3 +1,6 @@
+[![License](https://img.shields.io/badge/License-EPL%202.0-blue)](https://choosealicense.com/licenses/epl-2.0/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 # fog05 Deployment Guide for 5GCity
 
 The Eclipse fog05 ExtendedEdge-VIM has to be deployed following this instructions.
@@ -48,3 +51,5 @@ And then modify the file `/etc/fos/agent/` by replacing the address for the YAKS
 ...
 ```
 
+
+SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
