@@ -60,7 +60,12 @@ class LXD(RuntimePluginFDU):
         self.conn = None
         self.images = {}
         self.flavors = {}
-        self.mon_th = {}
+
+
+        self.mon_th = None
+        self.mon_run = False
+        self.mon_instances = []
+
         self.nm = self.get_nm_plugin().get('uuid')
         signal.signal(signal.SIGINT, self.__catch_signal)
         signal.signal(signal.SIGTERM, self.__catch_signal)
@@ -111,6 +116,18 @@ class LXD(RuntimePluginFDU):
         self.manifest.update({'status': 'running'})
         self.connector.loc.actual.add_node_plugin(self.node, self.uuid, self.manifest)
 
+
+        # cmd = 'sudo ip link set eth0.1399 master fosbr0'
+        # os.system(cmd)
+
+        self.mon_run = True
+
+        mt = threading.Thread(target=self.__monitor_instance,daemon=True)
+        mt.start()
+
+        self.mon_th = mt
+
+
         self.logger.info('start_runtime()', ' LXD Plugin - Started...')
 
         r = self.var.get()
@@ -120,8 +137,7 @@ class LXD(RuntimePluginFDU):
 
 
     def stop_runtime(self):
-        self.logger.info(
-            'stop_runtime()', 'LXD Plugin - Destroying {} running FDUs'.format(len(self.current_fdus)))
+        self.logger.info('stop_runtime()', 'LXD Plugin - Destroying {} running FDUs'.format(len(self.current_fdus)))
         for k in list(self.current_fdus.keys()):
             try:
                 fdu = self.current_fdus.get(k)
@@ -132,6 +148,7 @@ class LXD(RuntimePluginFDU):
 
             # if fdu.get_state() == State.DEFINED:
             #     self.undefine_fdu(k)
+
         keys = list(self.images.keys())
         for k in keys:
             self.logger.info(
@@ -143,6 +160,7 @@ class LXD(RuntimePluginFDU):
                 self.logger.error('stop_runtime()', 'Error {}'.format(e))
                 pass
 
+        self.mon_run = False
         self.conn = None
         self.logger.info('stop_runtime()', '[ DONE ] LXD Plugin - Bye Bye')
 
@@ -317,21 +335,21 @@ class LXD(RuntimePluginFDU):
                         'limits.cpu': str(fdu.comp_requirements.get('cpu_min_count')),
                         'limits.memory':'{}MB'.format(int(fdu.comp_requirements.get('ram_size_mb')))
                         }
-                for cp in fdu.get_connection_points():
-                    cp_id = cp.get('uuid')
-                    # cp_record = {
-                    #     'cp_uuid':cp_id,
-                    #     'status':'CREATE'
-                    # }
-                    self.connector.loc.desired.add_node_port(self.node, self.nm, cp_id, cp)
-                    res = self.connector.loc.actual.get_node_port(self.node, self.nm, cp_id)
-                    while res is None:
-                        try:
-                            res = self.connector.loc.actual.get_node_port(self.node, self.nm, cp_id)
-                        except Exception as e:
-                            res = None
-                    cp.update({'status':'CONNECTED'})
-                    # record.get('connection_points').append(cp_id)
+                # for cp in fdu.get_connection_points():
+                #     cp_id = cp.get('uuid')
+                #     # cp_record = {
+                #     #     'cp_uuid':cp_id,
+                #     #     'status':'CREATE'
+                #     # }
+                #     self.connector.loc.desired.add_node_port(self.node, self.nm, cp_id, cp)
+                #     res = self.connector.loc.actual.get_node_port(self.node, self.nm, cp_id)
+                #     while res is None:
+                #         try:
+                #             res = self.connector.loc.actual.get_node_port(self.node, self.nm, cp_id)
+                #         except Exception as e:
+                #             res = None
+                #     cp.update({'status':'CONNECTED'})
+                #     # record.get('connection_points').append(cp_id)
                 dev, interfaces = self.__generate_custom_profile_devices_configuration(fdu)
                 record.update({'interfaces':interfaces})
                 self.logger.info('configure_fdu()', '[ INFO ] Profile devices {}'.format(dev))
@@ -381,9 +399,10 @@ class LXD(RuntimePluginFDU):
 
             # TODO: monitoring TBA
             # this monitoring uses pylxd to get container information
-            mt = threading.Thread(target=self.__monitor_instance, args=(fdu_uuid, instance_uuid, fdu.name),daemon=True)
-            mt.start()
-            self.mon_th.update({instance_uuid:mt})
+            # mt = threading.Thread(target=self.__monitor_instance, args=(fdu_uuid, instance_uuid, fdu.name),daemon=True)
+            # mt.start()
+            # self.mon_th.update({instance_uuid:mt})
+            self.mon_instances.append((fdu_uuid, instance_uuid, fdu.name))
             self.logger.info('run_fdu()', '[ DONE ] LXD Plugin - Starting a Monitoring of {}'.format(instance_uuid))
 
     def clean_fdu(self, instance_uuid):
@@ -403,22 +422,22 @@ class LXD(RuntimePluginFDU):
             fdu.on_clean()
             fdu_uuid = fdu.fdu_uuid
             i = 0
-            for intf in fdu.get_interfaces():
-                intf_name = intf.get('vintf_name')
-                if intf.get('if_type').upper() not in ['PHYSICAL','BRIDGED']:
-                    intf_id = 'lxd-{}-{}'.format(fdu.get_short_id(), i)
-                    self.call_nw_plugin_function('delete_virtual_interface',{'intf_id':intf_id})
-                else:
-                    real_intf_name = intf.get('phy_face')
-                    self.call_os_plugin_function('set_interface_available', {'intf_name': real_intf_name})
-                i += 1
-            for cp in fdu.get_connection_points():
-                self.logger.info('clean_fdu()', 'LXD Plugin - CP: {}'.format(cp))
-                cp_id = cp.get('uuid')
-                cp = self.connector.loc.actual.get_node_port(self.node, self.nm, cp_id)
-                cp.update({'status':'DESTROY'})
-                self.connector.loc.desired.add_node_port(self.node, self.nm, cp_id, cp)
-                # self.call_nw_plugin_function('delete_port',{'cp_id': cp_id})
+            # for intf in fdu.get_interfaces():
+            #     intf_name = intf.get('vintf_name')
+            #     if intf.get('if_type').upper() not in ['PHYSICAL','BRIDGED']:
+            #         intf_id = 'lxd-{}-{}'.format(fdu.get_short_id(), i)
+            #         self.call_nw_plugin_function('delete_virtual_interface',{'intf_id':intf_id})
+            #     else:
+            #         real_intf_name = intf.get('phy_face')
+            #         self.call_os_plugin_function('set_interface_available', {'intf_name': real_intf_name})
+            #     i += 1
+            # for cp in fdu.get_connection_points():
+            #     self.logger.info('clean_fdu()', 'LXD Plugin - CP: {}'.format(cp))
+            #     cp_id = cp.get('uuid')
+            #     cp = self.connector.loc.actual.get_node_port(self.node, self.nm, cp_id)
+            #     cp.update({'status':'DESTROY'})
+            #     self.connector.loc.desired.add_node_port(self.node, self.nm, cp_id, cp)
+            #     # self.call_nw_plugin_function('delete_port',{'cp_id': cp_id})
 
             try:
                 self.logger.info('clean_fdu()', '[ INFO ] LXD Plugin - Container Name {}'.format(instance_uuid))
@@ -472,13 +491,14 @@ class LXD(RuntimePluginFDU):
             c.start()
             while c.status != 'Running':
                 try:
+                    time.sleep(0.1)
                     c.sync()
                 except Exception as e:
                     self.logger.info('run_fdu()', '[ ERR ] LXD Plugin - {}'.format(e))
-                    fdu.status = 'ERROR'
-                    self.current_fdus.update({instance_uuid: fdu})
-                    self.write_fdu_error(fdu_uuid, instance_uuid, 4, e)
-                    return
+                    # fdu.status = 'ERROR'
+                    # self.current_fdus.update({instance_uuid: fdu})
+                    # self.write_fdu_error(fdu_uuid, instance_uuid, 4, e)
+                    # return
 
             fm = c.FilesManager(self.conn, c)
             envs = 'export FOSUUID={} \n' \
@@ -510,12 +530,14 @@ class LXD(RuntimePluginFDU):
             fdu_uuid = fdu.fdu_uuid
             self.logger.info('undefine_fdu()', '[ INFO ] LXD Plugin - Container Name {}'.format(instance_uuid))
             c = self.conn.containers.get(fdu.name)
+            self.mon_instances.remove((fdu_uuid, instance_uuid, fdu.name))
             # self.mon_th.pop(fdu_uuid)
             try:
                 c.stop(force=True, wait=True)
                 c.sync()
 
                 while c.status != 'Stopped':
+                    time.sleep(0.1)
                     c.sync()
             except Exception as e:
                     tries = 1000
@@ -803,35 +825,33 @@ class LXD(RuntimePluginFDU):
     def after_migrate_entity_actions(self, fdu_uuid, dst=False):
         pass
 
-    def __monitor_instance(self, fdu_uuid, instance_id, instance_name):
-        self.logger.info('__monitor_fdu()','[ INFO ] LXD Plugin - Staring monitoring of Container uuid {}'.format(instance_id))
-        while True:
+    def __monitor_instance(self):
+        self.logger.info('__monitor_instance()','[ INFO ] LXD Plugin - Staring monitoring of FDUs')
+        while self.mon_run:
             time.sleep(self.update_interval)
-            try:
-                record = self.connector.loc.actual.get_node_fdu(self.node, self.uuid, fdu_uuid, instance_id)
-                if record.get('status') not in ['LAND', 'TAKE_OFF','MIGRATE']:
-                    self.logger.info('__monitor_fdu()','[ INFO ] LXD Plugin - Updating status of {}'.format(fdu_uuid))
-                    c = self.conn.containers.get(instance_name)
-                    cs = c.state()
-                    detailed_state = {}
-                    c_net = cs.network
-                    if c_net is None:
-                        c_net = []
-                    detailed_state.update({'network': c_net})
-                    detailed_state.update({'cpu': cs.cpu})
-                    detailed_state.update({'memory': cs.memory})
-                    detailed_state.update({'disk': cs.disk})
-                    detailed_state.update({'processes': cs.processes})
-                    detailed_state.update({'pid': cs.pid})
-                    record.update({'hypervisor_info': detailed_state})
-                    self.connector.loc.actual.add_node_fdu(self.node, self.uuid, fdu_uuid, instance_id, record)
+            for fdu_id, iid, name in self.mon_instances:
+                try:
+                    record = self.connector.loc.actual.get_node_fdu(self.node, self.uuid, fdu_id, iid)
+                    if record.get('status') not in ['LAND', 'TAKE_OFF','MIGRATE']:
+                        self.logger.info('__monitor_fdu()','[ INFO ] LXD Plugin - Updating status of {}'.format(fdu_id))
+                        c = self.conn.containers.get(name)
+                        cs = c.state()
+                        detailed_state = {}
+                        c_net = cs.network
+                        if c_net is None:
+                            c_net = []
+                        detailed_state.update({'network': c_net})
+                        detailed_state.update({'cpu': cs.cpu})
+                        detailed_state.update({'memory': cs.memory})
+                        detailed_state.update({'disk': cs.disk})
+                        detailed_state.update({'processes': cs.processes})
+                        detailed_state.update({'pid': cs.pid})
+                        record.update({'hypervisor_info': detailed_state})
+                        self.connector.loc.actual.add_node_fdu(self.node, self.uuid, fdu_id, iid, record)
 
-                # if c.status == 'Stopped':
-                #    self.logger.info('__monitor_instance()','[ INFO ] LXD Plugin - Stopping monitoring of Container uuid {}'.format(fdu_uuid))
-                #     return
-            except Exception as e:
-                self.logger.error('__monitor_instance()', '[ ERROR ] LXD Plugin - Stopping monitoring of Container uuid {} Error {}'.format(instance_id, e))
-                return
+                except Exception as e:
+                    self.logger.error('__monitor_instance()', '[ ERROR ] LXD Plugin - Monitoring of Container uuid {} Error {}'.format(iid, e))
+                    pass
 
     def __generate_custom_profile_userdata_configuration(self, userdata):
         userdata = {'user.user-data': userdata}
@@ -855,7 +875,7 @@ class LXD(RuntimePluginFDU):
 
         template_vintf = '{"name":"%s","type":"nic","parent":"%s","nictype":"physical","hwaddr":"%s"}'
         template_value_phy_mac = '{"name":"%s","type":"nic","parent":"%s","nictype":"physical","hwaddr":"%s"}'
-        template_value_macvlan_mac = '{"name":"%s","type":"nic","parent":"%s","nictype":"macvlan",,"hwaddr":"%s"}'
+        template_value_macvlan_mac = '{"name":"%s","type":"nic","parent":"%s","nictype":"macvlan","hwaddr":"%s"}'
         template_value_bridge_mac = '{"name":"%s","type":"nic","parent":"%s","nictype":"bridged","hwaddr":"%s"}'
         '''
         # Create tenant's storage pool
@@ -875,24 +895,10 @@ class LXD(RuntimePluginFDU):
             self.logger.info('__generate_custom_profile_userdata_configuration()','LXD Plugin - Interface info {}'.format(intf))
             intf_name = intf.get('vintf_name')
             mac = intf.get('mac_address', self.__generate_random_mac())
-            if intf.get('if_type').upper() in ['PHYSICAL','BRIDGED']:
-                real_intf_name = intf.get('phy_face')
-                if self.call_os_plugin_function('get_intf_type', {'name': real_intf_name}) in ['ethernet']:
-                    nw_v = json.loads(str(template_value_macvlan_mac % (intf_name, real_intf_name, mac)))
-                    self.call_os_plugin_function('set_interface_unaviable', {'intf_name': real_intf_name})
-                elif self.call_os_plugin_function('get_intf_type', {'name': real_intf_name}) in ['wireless']:
-                    nw_v = json.loads(str(template_value_phy_mac % (intf_name, real_intf_name, mac)))
-                    self.call_os_plugin_function('set_interface_unaviable', {'intf_name': real_intf_name})
-                else:
-                    nw_v = json.loads(str(template_value_bridge_mac % (intf_name, real_intf_name, mac)))
-                interfaces.append(real_intf_name)
-            else:
-                intf_id = 'lxd-{}-{}'.format(fdu.get_short_id(), i)
-                intf_data = self.call_nw_plugin_function('create_virtual_interface', {'intf_id':intf_id, 'descriptor': intf})
-                self.logger.info('__generate_custom_profile_userdata_configuration()','LXD Plugin - Interface info {}'.format(intf_data))
-                dev_name = intf_data.get('int_name')
-                nw_v = json.loads(str(template_vintf % (intf_name, dev_name, mac)))
-                interfaces.append(intf_id)
+
+            #always connect all interfaces to fosbr0
+            real_intf_name = 'fosbr0'
+            nw_v = json.loads(str(template_value_macvlan_mac % (intf_name, real_intf_name, mac)))
             devices.update({intf_name: nw_v})
             i += 1
 
